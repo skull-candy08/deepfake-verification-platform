@@ -26,10 +26,10 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from flask_jwt_extended import jwt_required
 
-from backend.extensions import db, bcrypt, jwt
-from backend.auth import auth_bp
+from extensions import db, bcrypt, jwt
+from auth import auth_bp
 
-from backend.config import (
+from config import (
     ALL_ALLOWED_EXTENSIONS,
     ALLOWED_EXTENSIONS,
     MAX_FILE_SIZE_BYTES,
@@ -37,13 +37,13 @@ from backend.config import (
     OUTPUT_DIR,
     UPLOAD_DIR,
 )
-from backend.utils.preprocessing import (
+from utils.preprocessing import (
     detect_media_type,
     extract_audio,
     extract_frames,
     normalize_image,
 )
-from backend.utils.scoring import (
+from utils.scoring import (
     calculate_weighted_score,
     classify_tier,
     generate_verdict,
