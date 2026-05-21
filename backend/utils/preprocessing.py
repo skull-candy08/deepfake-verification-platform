@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from backend.config import ALLOWED_EXTENSIONS, IMAGE_MAX_DIMENSION
+from config import ALLOWED_EXTENSIONS, IMAGE_MAX_DIMENSION
 
 logger = logging.getLogger(__name__)
 
