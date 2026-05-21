@@ -2,7 +2,7 @@
 Scoring and classification utilities for the Deepfake Verification Platform.
 
 Implements weighted score fusion, tier classification, and verdict
-generation based on the thresholds defined in :pymod:`backend.config`.
+generation based on the thresholds defined in :pymod:`config`.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from backend.config import MODULE_WEIGHTS, TIER_THRESHOLDS
+from config import MODULE_WEIGHTS, TIER_THRESHOLDS
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def calculate_weighted_score(
         module_scores: Mapping of module name → score (0-1) or ``None``
             when the module was not applicable / did not run.
         weights: Optional custom weight mapping.  Falls back to
-            :data:`backend.config.MODULE_WEIGHTS`.
+            :data:`config.MODULE_WEIGHTS`.
 
     Returns:
         A float in [0.0, 1.0] representing the overall manipulation
@@ -86,7 +86,7 @@ def classify_tier(score: float) -> dict:
     """Map a fused score to a classification tier.
 
     The tier boundaries are defined in
-    :data:`backend.config.TIER_THRESHOLDS`.
+    :data:`config.TIER_THRESHOLDS`.
 
     Args:
         score: A float in [0, 1].
