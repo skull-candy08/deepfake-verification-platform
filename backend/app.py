@@ -396,23 +396,23 @@ def _execute_pipeline(
 
     # Metadata analysis (image / video)
     if media_type in ("image", "video"):
-        fn = _safe_import_module("backend.modules.metadata_analysis")
+        fn = _safe_import_module("modules.metadata_analysis")
         if fn:
             module_results["metadata"] = _run_module("metadata", fn, file_path)
 
     # Compression analysis (image / video)
     if media_type in ("image", "video"):
-        fn = _safe_import_module("backend.modules.compression_analysis")
+        fn = _safe_import_module("modules.compression_analysis")
         if fn:
             module_results["compression"] = _run_module("compression", fn, file_path)
 
     # ELA analysis (image; for video, run on first extracted frame)
     if media_type == "image":
-        fn = _safe_import_module("backend.modules.ela_analysis")
+        fn = _safe_import_module("modules.ela_analysis")
         if fn:
             module_results["ela"] = _run_module("ela", fn, file_path)
     elif media_type == "video" and frame_paths:
-        fn = _safe_import_module("backend.modules.ela_analysis")
+        fn = _safe_import_module("modules.ela_analysis")
         if fn:
             module_results["ela"] = _run_module(
                 "ela", fn, frame_paths[0], frames=frame_paths
@@ -420,7 +420,7 @@ def _execute_pipeline(
 
     # Frame analysis (video only)
     if media_type == "video" and frame_paths:
-        fn = _safe_import_module("backend.modules.frame_consistency")
+        fn = _safe_import_module("modules.frame_consistency")
         if fn:
             module_results["frame"] = _run_module(
                 "frame", fn, file_path, frames=frame_paths
@@ -428,7 +428,7 @@ def _execute_pipeline(
 
     # Audio analysis (video with audio / standalone audio)
     if audio_path:
-        fn = _safe_import_module("backend.modules.audio_forensics")
+        fn = _safe_import_module("modules.audio_forensics")
         if fn:
             module_results["audio"] = _run_module("audio", fn, audio_path)
 
@@ -447,7 +447,7 @@ def _execute_pipeline(
     report_id: str | None = None
 
     report_gen_fn = _safe_import_module(
-        "backend.reports.generator", "generate_report"
+        "reports.generator", "generate_report"
     )
     if report_gen_fn:
         try:
