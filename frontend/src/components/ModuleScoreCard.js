@@ -41,6 +41,17 @@ const css = `
   font-variant-numeric: tabular-nums;
 }
 
+/* Description */
+.module-card-description {
+  font-size: var(--font-sm);
+  color: rgba(255, 255, 255, 0.95);
+  line-height: 1.55;
+  padding: var(--space-sm) var(--space-md);
+  background: rgba(0, 212, 255, 0.05);
+  border-left: 2px solid rgba(0, 212, 255, 0.3);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
 /* Score bar */
 .module-score-bar-wrapper {
   display: flex;
@@ -52,7 +63,7 @@ const css = `
   display: flex;
   justify-content: space-between;
   font-size: var(--font-xs);
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.85);
 }
 
 /* Findings */
@@ -68,8 +79,10 @@ const css = `
   position: relative;
   padding-left: 16px;
   font-size: var(--font-sm);
-  color: var(--text-secondary);
+  color: rgba(255, 255, 255, 0.9);
   line-height: 1.5;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 .module-findings li::before {
   content: '›';
@@ -109,12 +122,32 @@ const MODULE_ICONS = {
   default:     '🧪',
 };
 
+/* ─── Educational Descriptions ──────────────────────────────────── */
+const MODULE_DESCRIPTIONS = {
+  ela: 'Error Level Analysis (ELA) re-saves the image at a fixed JPEG quality and compares pixel-level differences. Edited or AI-generated regions show distinct error patterns that differ from the rest of the image.',
+  metadata: 'Inspects embedded EXIF, XMP, and IPTC metadata for traces of editing software, missing camera information, GPS inconsistencies, or suspicious timestamp patterns that indicate manipulation.',
+  compression: 'Analyzes JPEG quantization tables and compression artifacts to detect signs of re-compression, double-saving, or AI generation tools like Photoshop, DALL·E, or Midjourney.',
+  frame: 'Compares adjacent video frames for temporal inconsistencies — sudden jumps in motion, lighting shifts, or pixel-level discontinuities that reveal splicing or frame-by-frame generation.',
+  audio: 'Analyzes spectral features of audio for voice cloning artifacts, unnatural pitch transitions, spectral gaps, or frequency anomalies typical of text-to-speech and voice synthesis tools.',
+  noise: 'Examines the noise distribution pattern across the image. Authentic photos have consistent sensor noise, while manipulated regions often show mismatched noise profiles.',
+  face: 'Uses facial landmark detection to identify geometric inconsistencies in face proportions, asymmetry anomalies, or blending artifacts around face boundaries typical of face-swap deepfakes.',
+  frequency: 'Applies Fourier or wavelet transforms to detect periodic patterns and artifacts in the frequency domain that are invisible to the naked eye but characteristic of GAN-generated images.',
+};
+
 function getIcon(moduleName) {
   const lower = (moduleName || '').toLowerCase();
   for (const [key, icon] of Object.entries(MODULE_ICONS)) {
     if (lower.includes(key)) return icon;
   }
   return MODULE_ICONS.default;
+}
+
+function getDescription(moduleName) {
+  const lower = (moduleName || '').toLowerCase();
+  for (const [key, desc] of Object.entries(MODULE_DESCRIPTIONS)) {
+    if (lower.includes(key)) return desc;
+  }
+  return 'This forensic module analyzes the media for signs of manipulation or AI generation.';
 }
 
 function scoreColor(score) {
@@ -143,7 +176,13 @@ export default function ModuleScoreCard({ moduleName, score, details, evidence }
   const findings = Array.isArray(details)
     ? details
     : typeof details === 'object' && details !== null
-      ? Object.entries(details).map(([k, v]) => `${k}: ${v}`)
+      ? Object.entries(details).map(([k, v]) => {
+          let valStr = String(v);
+          if (valStr.length > 50) {
+            valStr = valStr.substring(0, 47) + '...';
+          }
+          return `${k}: ${valStr}`;
+        })
       : details
         ? [String(details)]
         : [];
@@ -159,6 +198,11 @@ export default function ModuleScoreCard({ moduleName, score, details, evidence }
           <span className="module-card-score-value" style={{ color: scoreColor(pctScore) }}>
             {pctScore.toFixed(1)}%
           </span>
+        </div>
+
+        {/* Description */}
+        <div className="module-card-description">
+          {getDescription(moduleName)}
         </div>
 
         {/* Score bar */}
@@ -182,13 +226,6 @@ export default function ModuleScoreCard({ moduleName, score, details, evidence }
               <li key={i}>{finding}</li>
             ))}
           </ul>
-        )}
-
-        {/* Evidence thumbnail */}
-        {evidence && (
-          <div className="module-evidence-thumb">
-            <img src={evidence} alt={`${moduleName} evidence`} loading="lazy" />
-          </div>
         )}
       </div>
     </>

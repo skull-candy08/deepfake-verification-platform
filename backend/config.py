@@ -6,6 +6,7 @@ and forensic analysis settings used across the entire application.
 """
 
 import os
+from datetime import timedelta
 
 # ---------------------------------------------------------------------------
 # Base directories – resolved relative to *this* file so they work regardless
@@ -16,12 +17,35 @@ UPLOAD_DIR: str = os.path.join(BASE_DIR, "uploads")
 OUTPUT_DIR: str = os.path.join(BASE_DIR, "outputs")
 
 # ---------------------------------------------------------------------------
+# Application secrets & JWT
+# ---------------------------------------------------------------------------
+SECRET_KEY: str = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-in-production")
+JWT_SECRET_KEY: str = os.environ.get("JWT_SECRET_KEY", "jwt-dev-secret-change-in-production")
+JWT_ACCESS_TOKEN_EXPIRES: timedelta = timedelta(hours=1)
+JWT_REFRESH_TOKEN_EXPIRES: timedelta = timedelta(days=30)
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+DATABASE_URL: str = os.environ.get("DATABASE_URL", "sqlite:///deepfake.db")
+
+# ---------------------------------------------------------------------------
+# CORS
+# ---------------------------------------------------------------------------
+CORS_ORIGINS: list[str] = os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(",")
+
+# ---------------------------------------------------------------------------
+# Cleanup
+# ---------------------------------------------------------------------------
+CLEANUP_MAX_AGE_HOURS: int = int(os.environ.get("CLEANUP_MAX_AGE_HOURS", "24"))
+
+# ---------------------------------------------------------------------------
 # File upload constraints
 # ---------------------------------------------------------------------------
 MAX_FILE_SIZE_BYTES: int = 100 * 1024 * 1024  # 100 MB
 
 ALLOWED_EXTENSIONS: dict[str, set[str]] = {
-    "image": {"png", "jpg", "jpeg", "bmp", "tiff", "tif", "webp"},
+    "image": {"png", "jpg", "jpeg", "bmp", "tiff", "tif", "webp", "gif"},
     "video": {"mp4", "avi", "mov", "mkv", "wmv", "flv", "webm"},
     "audio": {"wav", "mp3", "flac", "aac", "ogg", "m4a"},
 }

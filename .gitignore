@@ -5,3 +5,8 @@ __pycache__/
 dist/
 build/
 uploads/
+outputs/
+*.db
+*.sqlite3
+instance/
+*.pyc

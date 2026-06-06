@@ -63,6 +63,10 @@ const css = `
   margin-top: 2px;
 }
 
+.header-tagline {
+  display: none;
+}
+
 .header-gradient-line {
   position: absolute;
   bottom: 0;
@@ -87,13 +91,26 @@ const css = `
   50%      { background-position: 100% 0%; }
 }
 
+@media (min-width: 768px) {
+  .header-tagline {
+    display: block;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+    padding: 6px 16px;
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-full);
+    background: rgba(0, 212, 255, 0.04);
+  }
+}
+
 @media (max-width: 480px) {
   .header-subtitle { display: none; }
   .header-title { font-size: var(--font-lg); }
 }
 `;
 
-export default function Header({ showNewAnalysis, onNewAnalysis, user, onLogout }) {
+export default function Header({ showNewAnalysis, onNewAnalysis, onLogout }) {
   return (
     <>
       <style>{css}</style>
@@ -138,23 +155,19 @@ export default function Header({ showNewAnalysis, onNewAnalysis, user, onLogout 
             </div>
           </div>
 
-          {/* Actions */}
+          {/* Right side */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+            <span className="header-tagline">AI-Powered Forensic Media Analysis</span>
             {showNewAnalysis && (
               <button className="btn btn-secondary btn-sm" onClick={onNewAnalysis}>
                 <span style={{ fontSize: '1.1em' }}>⊕</span>
                 New Analysis
               </button>
             )}
-            {user && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-                <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-sm)' }}>
-                  {user.username}
-                </span>
-                <button className="btn btn-secondary btn-sm" onClick={onLogout}>
-                  Logout
-                </button>
-              </div>
+            {onLogout && (
+              <button className="btn btn-ghost btn-sm" onClick={onLogout} title="Sign out">
+                ⏻ Logout
+              </button>
             )}
           </div>
         </div>

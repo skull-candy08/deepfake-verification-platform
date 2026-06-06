@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getToken, clearTokens, refreshAccessToken } from './auth';
 
 const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
@@ -7,13 +8,72 @@ const apiClient = axios.create({
   timeout: 120000,
 });
 
+/* ─── Request Interceptor ──────────────────────────────────────── */
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = getToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+/* ─── Response Interceptor ─────────────────────────────────────── */
+let isRefreshing = false;
+let failedQueue = [];
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response && error.response.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+  async (error) => {
+    const originalRequest = error.config;
+
+    if (
+      error.response?.status === 401 &&
+      !originalRequest._retry &&
+      !originalRequest.url?.includes('/auth/')
+    ) {
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        })
+          .then((token) => {
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+            return apiClient(originalRequest);
+          })
+          .catch((err) => Promise.reject(err));
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      try {
+        const newToken = await refreshAccessToken();
+        processQueue(null, newToken);
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        return apiClient(originalRequest);
+      } catch (refreshError) {
+        processQueue(refreshError, null);
+        clearTokens();
+        window.location.reload();
+        return Promise.reject(refreshError);
+      } finally {
+        isRefreshing = false;
+      }
     }
+
     return Promise.reject(error);
   }
 );
@@ -70,11 +130,22 @@ export async function uploadMedia(file, onUploadProgress) {
 /**
  * Trigger analysis on an uploaded file.
  * @param {string} fileId - The ID returned from uploadMedia.
- * @returns {Promise<object>} - The full analysis results.
+ * @returns {Promise<object>} - The initial analysis response (may include analysis_id for polling).
  */
 export async function analyzeMedia(fileId) {
   return apiRequest(() =>
     apiClient.post('/api/analyze', { file_id: fileId })
+  );
+}
+
+/**
+ * Poll analysis status.
+ * @param {string} analysisId - The analysis ID to check.
+ * @returns {Promise<object>} - Status and results if completed.
+ */
+export async function getAnalysisStatus(analysisId) {
+  return apiRequest(() =>
+    apiClient.get(`/api/status/${analysisId}`)
   );
 }
 

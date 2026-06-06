@@ -7,28 +7,23 @@ retrieval, and analysis status tracking.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
-import traceback
-import tempfile
+import re
 import shutil
-import requests
+import threading
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-import cloudinary
-import cloudinary.uploader
-from cloudinary.utils import cloudinary_url
-
+import magic
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
+from flask_jwt_extended import get_jwt_identity, jwt_required
 from werkzeug.utils import secure_filename
-from flask_jwt_extended import jwt_required
 
-from extensions import db, bcrypt, jwt
-from auth import auth_bp
-
+import config
 from config import (
     ALL_ALLOWED_EXTENSIONS,
     ALLOWED_EXTENSIONS,
@@ -37,6 +32,10 @@ from config import (
     OUTPUT_DIR,
     UPLOAD_DIR,
 )
+from extensions import bcrypt, db, jwt, limiter
+from models import Analysis, Upload, User
+from auth import auth_bp
+from cleanup import run_cleanup
 from utils.preprocessing import (
     detect_media_type,
     extract_audio,
@@ -54,34 +53,27 @@ from utils.scoring import (
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE_BYTES
-
-# Auth & Database config
-app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
-    "DATABASE_URL", 
-    "postgresql://deepfake_db_4z2x_user:H0zTJuCboGc5ER6ZYZAKKUKf3Ak3RMks@dpg-d8735sq8qa3s73cu1bl0-a.singapore-postgres.render.com/deepfake_db_4z2x"
-)
+app.config["SECRET_KEY"] = config.SECRET_KEY
+app.config["JWT_SECRET_KEY"] = config.JWT_SECRET_KEY
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = config.JWT_ACCESS_TOKEN_EXPIRES
+app.config["JWT_REFRESH_TOKEN_EXPIRES"] = config.JWT_REFRESH_TOKEN_EXPIRES
+app.config["SQLALCHEMY_DATABASE_URI"] = config.DATABASE_URL
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["JWT_SECRET_KEY"] = "super-secret-deepfake-key-change-in-prod"
+app.config["MAX_CONTENT_LENGTH"] = config.MAX_FILE_SIZE_BYTES
 
+# Initialize extensions
 db.init_app(app)
-bcrypt.init_app(app)
 jwt.init_app(app)
+bcrypt.init_app(app)
+limiter.init_app(app)
+CORS(app, origins=config.CORS_ORIGINS)
 
-with app.app_context():
-    db.create_all()
-
+# Register auth blueprint
 app.register_blueprint(auth_bp)
 
-# Cloudinary config
-cloudinary.config(
-    cloud_name="dnhwswxav",
-    api_key="796264911316469",
-    api_secret="M1yepEiUfTg3cFFGRROOsFNkwgU",
-    secure=True
-)
-
-CORS(app)
+# Create tables
+with app.app_context():
+    db.create_all()
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -92,16 +84,6 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# In-memory stores (swap for a DB in production)
-# ---------------------------------------------------------------------------
-
-# file_id  → {file_id, original_filename, saved_path, media_type, uploaded_at}
-_uploads: dict[str, dict[str, Any]] = {}
-
-# analysis_id → full results dict
-_analyses: dict[str, dict[str, Any]] = {}
 
 # ---------------------------------------------------------------------------
 # Ensure required directories exist
@@ -162,11 +144,13 @@ def _safe_import_module(module_path: str, func_name: str = "analyze"):
 
 @app.route("/api/upload", methods=["POST"])
 @jwt_required()
+@limiter.limit("20/hour")
 def upload_file():
     """Accept a multipart file upload.
 
-    Validates the file extension against the allow-list, saves it under a
-    UUID-based filename in the uploads directory, and returns metadata.
+    Validates the file extension against the allow-list, validates MIME type
+    with python-magic, saves it under a UUID-based filename in the uploads
+    directory, creates a database record, and returns metadata.
 
     **Request**: ``multipart/form-data`` with a ``file`` field.
 
@@ -180,6 +164,8 @@ def upload_file():
             "media_type": "image"
         }
     """
+    current_user_id = int(get_jwt_identity())
+
     if "file" not in request.files:
         return jsonify({"error": "No file part in the request."}), 400
 
@@ -202,26 +188,44 @@ def upload_file():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    # Upload to Cloudinary directly
+    # Save locally to UPLOAD_DIR
+    file_id = uuid4().hex
+    # Preserve original extension
+    ext = os.path.splitext(original_filename)[1]
+    saved_filename = f"{file_id}{ext}"
+    saved_path = os.path.join(UPLOAD_DIR, saved_filename)
+
     try:
-        upload_result = cloudinary.uploader.upload(
-            file,
-            resource_type="auto"
-        )
+        file.save(saved_path)
     except Exception as e:
-        logger.error(f"Cloudinary upload failed: {e}")
-        return jsonify({"error": "Failed to upload to cloud storage."}), 500
+        logger.error("Local file save failed: %s", e)
+        return jsonify({"error": "Failed to save file locally."}), 500
 
-    file_id = upload_result["public_id"]
-    secure_url = upload_result["secure_url"]
+    # Validate MIME type with python-magic
+    try:
+        detected_mime = magic.from_file(saved_path, mime=True)
+    except Exception:
+        detected_mime = None
+    if detected_mime:
+        mime_map = {
+            "image": ["image/"],
+            "video": ["video/"],
+            "audio": ["audio/"],
+        }
+        if not any(detected_mime.startswith(prefix) for prefix in mime_map.get(media_type, [])):
+            os.remove(saved_path)
+            return jsonify({"error": "File content does not match its extension."}), 400
 
-    _uploads[file_id] = {
-        "file_id": file_id,
-        "original_filename": original_filename,
-        "secure_url": secure_url,
-        "media_type": media_type,
-        "uploaded_at": datetime.now(timezone.utc).isoformat(),
-    }
+    # Create database record
+    upload_record = Upload(
+        user_id=current_user_id,
+        file_id=file_id,
+        original_filename=original_filename,
+        saved_path=saved_path,
+        media_type=media_type,
+    )
+    db.session.add(upload_record)
+    db.session.commit()
 
     logger.info(
         "Upload OK – file_id=%s  filename=%s  media_type=%s",
@@ -239,6 +243,7 @@ def upload_file():
 
 @app.route("/api/analyze", methods=["POST"])
 @jwt_required()
+@limiter.limit("10/hour")
 def analyze_file():
     """Run the full forensic pipeline on a previously uploaded file.
 
@@ -248,75 +253,116 @@ def analyze_file():
 
         {"file_id": "..."}
 
-    **Response** (200): Full analysis results including per-module scores,
-    fused score, tier classification, verdict, and a link to the PDF
-    report.
+    **Response** (202): ``{analysis_id, status: 'processing'}``
     """
+    current_user_id = int(get_jwt_identity())
+
     data = request.get_json(silent=True)
     if not data or "file_id" not in data:
         return jsonify({"error": "Missing 'file_id' in request body."}), 400
 
     file_id: str = data["file_id"]
 
-    if file_id not in _uploads:
-        return jsonify({"error": f"Unknown file_id: {file_id}"}), 404
+    # Look up upload from database and verify ownership
+    upload_record = Upload.query.filter_by(file_id=file_id).first()
+    if not upload_record:
+        return jsonify({"error": "Unknown file_id."}), 404
+    if upload_record.user_id != current_user_id:
+        return jsonify({"error": "Access denied."}), 403
 
-    upload_info = _uploads[file_id]
-    media_type: str = upload_info["media_type"]
-    secure_url: str = upload_info["secure_url"]
-    original_filename: str = upload_info["original_filename"]
+    media_type: str = upload_record.media_type
+    saved_path: str = upload_record.saved_path
+    original_filename: str = upload_record.original_filename
 
     analysis_id: str = uuid4().hex
 
-    # Mark as in-progress.
-    _analyses[analysis_id] = {
-        "analysis_id": analysis_id,
-        "file_id": file_id,
-        "status": "processing",
-        "started_at": datetime.now(timezone.utc).isoformat(),
-    }
+    # Create Analysis record in database
+    analysis_record = Analysis(
+        user_id=current_user_id,
+        upload_id=upload_record.id,
+        analysis_id=analysis_id,
+        status="processing",
+    )
+    db.session.add(analysis_record)
+    db.session.commit()
 
-    try:
-        # Download from Cloudinary to a temporary file
-        temp_dir = tempfile.mkdtemp()
-        temp_file_path = os.path.join(temp_dir, original_filename)
-        logger.info(f"Downloading from {secure_url} to {temp_file_path}")
-        
-        r = requests.get(secure_url, stream=True)
-        r.raise_for_status()
-        with open(temp_file_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-                
-        results = _execute_pipeline(analysis_id, temp_file_path, media_type)
-        
-        # Cleanup temp directory
+    # Run pipeline in background thread
+    thread = threading.Thread(
+        target=_run_analysis_background,
+        args=(app, analysis_id, saved_path, media_type, file_id, original_filename),
+    )
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({"analysis_id": analysis_id, "status": "processing"}), 202
+
+
+def _run_analysis_background(
+    app_instance,
+    analysis_id: str,
+    file_path: str,
+    media_type: str,
+    file_id: str,
+    original_filename: str,
+):
+    """Execute the forensic pipeline in a background thread."""
+    with app_instance.app_context():
         try:
-            shutil.rmtree(temp_dir)
-        except Exception as e:
-            logger.warning(f"Failed to cleanup temp dir {temp_dir}: {e}")
-            
-    except Exception:
-        tb = traceback.format_exc()
-        logger.error("Pipeline failed for analysis %s:\n%s", analysis_id, tb)
-        _analyses[analysis_id]["status"] = "failed"
-        _analyses[analysis_id]["error"] = tb
-        return jsonify({"error": "Analysis pipeline failed.", "analysis_id": analysis_id}), 500
-
-    return jsonify(results), 200
+            results = _execute_pipeline(
+                analysis_id, file_path, media_type, file_id, original_filename
+            )
+            analysis = Analysis.query.filter_by(analysis_id=analysis_id).first()
+            if analysis:
+                analysis.status = "completed"
+                analysis.fused_score = results.get("fused_score")
+                tier_info = results.get("tier", {})
+                analysis.tier_label = tier_info.get("label") if isinstance(tier_info, dict) else str(tier_info)
+                analysis.verdict = results.get("verdict")
+                analysis.report_path = results.get("report_id")
+                analysis.completed_at = datetime.now(timezone.utc)
+                analysis.result_json = json.dumps(results, default=str)
+                db.session.commit()
+        except Exception:
+            logger.exception("Pipeline failed for analysis %s", analysis_id)
+            analysis = Analysis.query.filter_by(analysis_id=analysis_id).first()
+            if analysis:
+                analysis.status = "failed"
+                analysis.error_message = "An internal error occurred during analysis."
+                analysis.completed_at = datetime.now(timezone.utc)
+                db.session.commit()
 
 
 @app.route("/api/report/<report_id>", methods=["GET"])
 @jwt_required()
+@limiter.limit("30/minute")
 def get_report(report_id: str):
     """Serve a generated PDF report by its ID.
 
     The report file is expected at ``<OUTPUT_DIR>/<report_id>.pdf``.
     """
+    # Validate report_id format
+    if not re.match(r'^[a-f0-9]{32}$', report_id):
+        return jsonify({"error": "Invalid report ID format."}), 400
+
+    current_user_id = int(get_jwt_identity())
+
+    # Verify ownership
+    analysis = Analysis.query.filter_by(analysis_id=report_id).first()
+    if not analysis:
+        return jsonify({"error": "Report not found."}), 404
+    if analysis.user_id != current_user_id:
+        return jsonify({"error": "Access denied."}), 403
+
     report_path = os.path.join(OUTPUT_DIR, f"{report_id}.pdf")
 
+    # Path traversal protection
+    resolved_path = os.path.realpath(report_path)
+    resolved_output_dir = os.path.realpath(OUTPUT_DIR)
+    if not resolved_path.startswith(resolved_output_dir):
+        return jsonify({"error": "Invalid report path."}), 400
+
     if not os.path.isfile(report_path):
-        return jsonify({"error": f"Report not found: {report_id}"}), 404
+        return jsonify({"error": "Report file not found."}), 404
 
     return send_file(
         report_path,
@@ -333,20 +379,51 @@ def analysis_status(analysis_id: str):
 
     Possible statuses: ``processing``, ``completed``, ``failed``.
     """
-    if analysis_id not in _analyses:
-        return jsonify({"error": f"Unknown analysis_id: {analysis_id}"}), 404
+    # Validate format
+    if not re.match(r'^[a-f0-9]{32}$', analysis_id):
+        return jsonify({"error": "Invalid analysis ID format."}), 400
 
-    entry = _analyses[analysis_id]
+    current_user_id = int(get_jwt_identity())
 
-    # Return a slim status view when the analysis is still running.
-    if entry.get("status") in ("processing", "failed"):
+    analysis = Analysis.query.filter_by(analysis_id=analysis_id).first()
+    if not analysis:
+        return jsonify({"error": "Unknown analysis_id."}), 404
+    if analysis.user_id != current_user_id:
+        return jsonify({"error": "Access denied."}), 403
+
+    # Return a slim status view when the analysis is still running or failed.
+    if analysis.status in ("processing", "pending"):
         return jsonify({
             "analysis_id": analysis_id,
-            "status": entry["status"],
-            "error": entry.get("error"),
+            "status": analysis.status,
         }), 200
 
-    return jsonify(entry), 200
+    if analysis.status == "failed":
+        return jsonify({
+            "analysis_id": analysis_id,
+            "status": "failed",
+            "error": "An internal error occurred.",
+        }), 200
+
+    # Completed — return full results from result_json
+    response: dict[str, Any] = {
+        "analysis_id": analysis_id,
+        "status": "completed",
+        "fused_score": analysis.fused_score,
+        "tier_label": analysis.tier_label,
+        "verdict": analysis.verdict,
+        "report_id": analysis.report_path,
+        "started_at": analysis.started_at.isoformat() if analysis.started_at else None,
+        "completed_at": analysis.completed_at.isoformat() if analysis.completed_at else None,
+    }
+
+    if analysis.result_json:
+        try:
+            response["results"] = json.loads(analysis.result_json)
+        except (json.JSONDecodeError, TypeError):
+            response["results"] = None
+
+    return jsonify(response), 200
 
 
 # ── pipeline orchestration ──────────────────────────────────────────────────
@@ -356,6 +433,8 @@ def _execute_pipeline(
     analysis_id: str,
     file_path: str,
     media_type: str,
+    file_id: str,
+    original_filename: str,
 ) -> dict[str, Any]:
     """Orchestrate preprocessing → forensic modules → scoring → reporting.
 
@@ -363,6 +442,8 @@ def _execute_pipeline(
         analysis_id: Unique identifier for this analysis run.
         file_path: Absolute path to the uploaded file.
         media_type: One of ``'image'``, ``'video'``, ``'audio'``.
+        file_id: The file_id of the upload.
+        original_filename: Original filename as uploaded.
 
     Returns:
         A dict containing per-module results, fused score, tier,
@@ -384,9 +465,9 @@ def _execute_pipeline(
         audio_path = extract_audio(file_path, audio_out)
 
     elif media_type == "image":
-        # Normalise but we pass the original path to modules; they can
-        # call normalize_image themselves if they need it.
-        _ = normalize_image(file_path)
+        # Normalise — the result is not used directly; modules call
+        # normalize_image themselves if they need it.
+        normalize_image(file_path)
 
     elif media_type == "audio":
         audio_path = file_path
@@ -453,9 +534,11 @@ def _execute_pipeline(
         try:
             analysis_payload = {
                 "analysis_id": analysis_id,
+                "file_id": file_id,
+                "filename": original_filename,
                 "file_path": file_path,
                 "media_type": media_type,
-                "module_results": {
+                "module_scores": {
                     k: v for k, v in module_results.items() if v is not None
                 },
                 "fused_score": fused_score,
@@ -465,34 +548,26 @@ def _execute_pipeline(
             report_path = report_gen_fn(analysis_payload, analysis_output_dir)
             if report_path and os.path.isfile(report_path):
                 report_id = analysis_id
-                
-                # Upload the PDF to Cloudinary
-                try:
-                    pdf_upload_res = cloudinary.uploader.upload(
-                        report_path,
-                        resource_type="raw",
-                        public_id=f"reports/{report_id}"
-                    )
-                    report_url = pdf_upload_res["secure_url"]
-                    logger.info("Report generated and uploaded to Cloudinary: %s", report_url)
-                except Exception as e:
-                    logger.error("Failed to upload report to Cloudinary: %s", e)
-                    report_url = None
+                # Copy report to OUTPUT_DIR root so /api/report/<id> can serve it
+                final_report = os.path.join(OUTPUT_DIR, f"{report_id}.pdf")
+                if os.path.abspath(report_path) != os.path.abspath(final_report):
+                    shutil.copy2(report_path, final_report)
+                logger.info("Report generated: %s", final_report)
         except Exception:
             logger.exception("Report generation failed.")
 
     # ── 5. Assemble response ────────────────────────────────────────────
     response: dict[str, Any] = {
         "analysis_id": analysis_id,
-        "file_id": _uploads_file_id_for(file_path),
+        "file_id": file_id,
         "media_type": media_type,
         "status": "completed",
         "modules": {},
         "fused_score": fused_score,
         "tier": tier_info,
         "verdict": verdict,
-        "report_id": None,
-        "report_url": report_url,
+        "report_id": report_id,
+        "report_url": None,
         "completed_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -511,21 +586,27 @@ def _execute_pipeline(
                 "error": "Module did not return results.",
             }
 
-    # Persist full results for the status endpoint.
-    _analyses[analysis_id] = response
-
     return response
 
 
-# ── internal helpers ────────────────────────────────────────────────────────
+# ── global error handlers ───────────────────────────────────────────────────
 
 
-def _uploads_file_id_for(file_path: str) -> str | None:
-    """Look up the file_id that corresponds to *file_path*."""
-    # file_path is now a temp path, so we can't match it this way easily.
-    # Since we don't strictly need file_id in the _execute_pipeline return (it's injected in /analyze),
-    # let's just return a placeholder, or we could pass file_id down.
-    return None
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": "Resource not found."}), 404
+
+
+@app.errorhandler(500)
+def internal_error(e):
+    logger.exception("Unhandled exception")
+    return jsonify({"error": "An internal server error occurred."}), 500
+
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    logger.exception("Unhandled exception: %s", e)
+    return jsonify({"error": "An unexpected error occurred."}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -533,4 +614,4 @@ def _uploads_file_id_for(file_path: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=os.environ.get("FLASK_ENV") == "development")

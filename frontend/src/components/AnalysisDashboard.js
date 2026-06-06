@@ -190,62 +190,61 @@ const css = `
 }
 `;
 
-/* ─── Helpers ───────────────────────────────────────────────────── */
-function getScoreColor(score) {
-  if (score < 0.4) return 'var(--color-success)';
-  if (score < 0.7) return 'var(--color-warning)';
-  return 'var(--color-danger)';
+/** Map backend tier labels to colors */
+function getVerdictColor(tierLabel) {
+  if (!tierLabel) return 'var(--color-warning)';
+  const label = tierLabel.toLowerCase();
+  if (label.includes('authentic')) return 'var(--color-success)';
+  if (label.includes('suspicious')) return 'var(--color-warning)';
+  if (label.includes('manipulated') || label.includes('forgery')) return 'var(--color-danger)';
+  return 'var(--color-warning)';
 }
 
-function getVerdict(score) {
-  if (score < 0.25) return { text: 'Likely Authentic', desc: 'No significant signs of manipulation detected.' };
-  if (score < 0.4)  return { text: 'Probably Authentic', desc: 'Minor anomalies detected, but likely benign.' };
-  if (score < 0.55) return { text: 'Inconclusive', desc: 'Some indicators warrant further review.' };
-  if (score < 0.7)  return { text: 'Suspicious', desc: 'Multiple forensic signals suggest possible manipulation.' };
-  if (score < 0.85) return { text: 'Likely Manipulated', desc: 'Strong indicators of digital manipulation detected.' };
-  return { text: 'Highly Manipulated', desc: 'Overwhelming evidence of deepfake or forgery.' };
-}
-
-function getBadgeClass(score) {
-  if (score < 0.4) return 'badge-success';
-  if (score < 0.7) return 'badge-warning';
-  return 'badge-danger';
-}
-
-function getTier(score) {
-  if (score < 0.2)  return { num: 1, name: 'Verified Authentic',  color: 'var(--color-success)' };
-  if (score < 0.4)  return { num: 2, name: 'Low Risk',            color: 'var(--color-success)' };
-  if (score < 0.55) return { num: 3, name: 'Moderate Risk',       color: 'var(--color-warning)' };
-  if (score < 0.7)  return { num: 4, name: 'Elevated Risk',       color: 'var(--color-warning)' };
-  if (score < 0.85) return { num: 5, name: 'High Risk',           color: 'var(--color-danger)' };
-  return { num: 6, name: 'Critical — Deepfake Detected', color: 'var(--color-danger)' };
+/** Description text based on tier label */
+function getVerdictDesc(tierLabel) {
+  if (!tierLabel) return 'Analysis complete.';
+  const label = tierLabel.toLowerCase();
+  if (label.includes('authentic')) return 'No significant signs of manipulation detected.';
+  if (label.includes('suspicious')) return 'Multiple forensic signals suggest possible manipulation.';
+  if (label.includes('manipulated')) return 'Strong indicators of digital manipulation detected.';
+  if (label.includes('forgery')) return 'Overwhelming evidence of deepfake or forgery.';
+  return 'Analysis complete. Review module details below.';
 }
 
 /* ─── Component ─────────────────────────────────────────────────── */
 export default function AnalysisDashboard({ results }) {
   const [animatedScore, setAnimatedScore] = useState(0);
 
-  /* Normalize overall score to 0-1 range */
-  const rawScore = results?.fused_score ?? results?.overall_score ?? results?.overallScore ?? results?.score ?? 0;
+  // When polling /api/status, the full result_json is inside results.results
+  const finalResults = results?.results || results;
+
+  /* Normalize overall score: fused_score is 0-1 from backend */
+  const rawScore = finalResults?.fused_score ?? finalResults?.overall_score ?? finalResults?.overallScore ?? finalResults?.score ?? 0;
   const overallScore = rawScore > 1 ? rawScore / 100 : rawScore;
+
+  /* Use backend verdict & tier as single source of truth */
+  const verdictText = finalResults?.verdict || 'Analysis Complete';
+  const tierData = finalResults?.tier || { label: verdictText, level: 2 };
+  const tierLabel = tierData.label || verdictText;
+  const tierLevel = tierData.level ?? 2;
 
   /* Modules */
   const modules = useMemo(() => {
-    const raw = results?.modules || results?.module_results || results?.results || [];
+    const raw = finalResults?.modules || finalResults?.module_results || [];
     return Array.isArray(raw) ? raw : Object.entries(raw).map(([name, data]) => ({
-      name: data.name || name,
-      score: data.score ?? data.confidence ?? 0,
-      details: data.details || data.findings || [],
-      evidence: data.evidence || data.evidence_url || null,
+      name: data?.name || name,
+      score: data?.score ?? data?.confidence ?? 0,
+      details: data?.details || data?.findings || [],
+      evidence: data?.evidence || data?.evidence_url || null,
     }));
-  }, [results]);
+  }, [finalResults]);
 
-  /* Report URL */
+  /* Report URL — use report_id to build the Flask download URL */
   const reportUrl = useMemo(() => {
-    const id = results?.report_id || results?.reportId;
+    const id = finalResults?.report_id || finalResults?.reportId;
     if (id) return getReportUrl(id);
-    return results?.report_url || results?.reportUrl || null;
-  }, [results]);
+    return finalResults?.report_url || finalResults?.reportUrl || null;
+  }, [finalResults]);
 
   /* Animate gauge */
   useEffect(() => {
@@ -269,9 +268,8 @@ export default function AnalysisDashboard({ results }) {
   const gaugeRadius = 95;
   const gaugeCircumference = 2 * Math.PI * gaugeRadius;
   const gaugeOffset = gaugeCircumference - animatedScore * gaugeCircumference;
-  const scoreColor = getScoreColor(overallScore);
-  const verdict = getVerdict(overallScore);
-  const tier = getTier(overallScore);
+  const scoreColor = getVerdictColor(tierLabel);
+  const verdictDesc = getVerdictDesc(tierLabel);
 
   return (
     <>
@@ -301,9 +299,9 @@ export default function AnalysisDashboard({ results }) {
           </div>
 
           <div className="verdict-text" style={{ color: scoreColor }}>
-            {verdict.text}
+            {verdictText}
           </div>
-          <p className="verdict-description">{verdict.desc}</p>
+          <p className="verdict-description">{verdictDesc}</p>
         </section>
 
         {/* ── Tier Badge ─────────────────────────────────────────── */}
@@ -311,13 +309,13 @@ export default function AnalysisDashboard({ results }) {
           <div className={`tier-badge`}>
             <div
               className="tier-number"
-              style={{ color: tier.color, borderColor: tier.color, background: `${tier.color}15` }}
+              style={{ color: scoreColor, borderColor: scoreColor, background: `${scoreColor}15` }}
             >
-              {tier.num}
+              {tierLevel}
             </div>
             <div className="tier-info">
               <span className="tier-label">Threat Tier</span>
-              <span className="tier-name" style={{ color: tier.color }}>{tier.name}</span>
+              <span className="tier-name" style={{ color: scoreColor }}>{tierLabel}</span>
             </div>
           </div>
         </section>
@@ -346,7 +344,8 @@ export default function AnalysisDashboard({ results }) {
 
         {/* ── Report Download ────────────────────────────────────── */}
         {reportUrl && (
-          <section className="report-section">
+          <section className="report-section" style={{ flexDirection: 'column', alignItems: 'center', gap: 'var(--space-sm)' }}>
+            <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-sm)', marginBottom: 'var(--space-sm)' }}>Full forensic analysis report with detailed findings</p>
             <ReportViewer reportUrl={reportUrl} />
           </section>
         )}

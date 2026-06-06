@@ -1,12 +1,62 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { uploadMedia, analyzeMedia } from '../utils/api';
+import { uploadMedia, analyzeMedia, getAnalysisStatus } from '../utils/api';
 
 /* ─── Scoped Styles ─────────────────────────────────────────────── */
 const css = `
 .uploader-wrapper {
   width: 100%;
-  max-width: 620px;
+  max-width: 680px;
   animation: fadeSlideUp 0.6s ease-out;
+}
+
+.hero-section {
+  text-align: center;
+  margin-bottom: var(--space-2xl);
+}
+.hero-title {
+  font-size: var(--font-3xl);
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  margin-bottom: var(--space-sm);
+  background: linear-gradient(135deg, var(--accent-cyan) 0%, #33ddff 40%, var(--accent-purple) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero-desc {
+  color: var(--text-secondary);
+  font-size: var(--font-base);
+  line-height: 1.6;
+  max-width: 520px;
+  margin: 0 auto var(--space-lg);
+}
+.hero-features {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+.hero-feature {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 6px 16px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-full);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.hero-feature-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-cyan);
+  flex-shrink: 0;
 }
 
 .uploader-heading {
@@ -306,14 +356,48 @@ export default function FileUploader({
         onUploadProgress(pct);
       });
 
-      /* Step 2: Analyze */
+      /* Step 2: Trigger analysis (returns immediately with analysis_id) */
       setProgress(100);
       onUploadProgress(100);
 
       const fileId = uploadRes.file_id || uploadRes.fileId || uploadRes.id;
-      const analysisRes = await analyzeMedia(fileId);
+      const analyzeRes = await analyzeMedia(fileId);
 
-      onAnalysisComplete(analysisRes);
+      /* Step 3: Poll for completion */
+      const analysisId = analyzeRes.analysis_id || analyzeRes.analysisId;
+      if (!analysisId) {
+        // Backend returned results synchronously (fallback)
+        onAnalysisComplete(analyzeRes);
+        return;
+      }
+
+      const pollInterval = 2000; // 2 seconds
+      const maxAttempts = 120;   // 4 minutes max
+      let attempts = 0;
+
+      const poll = async () => {
+        attempts++;
+        const statusRes = await getAnalysisStatus(analysisId);
+
+        if (statusRes.status === 'completed') {
+          onAnalysisComplete(statusRes);
+          return;
+        }
+
+        if (statusRes.status === 'failed') {
+          throw new Error(statusRes.error || 'Analysis failed on the server.');
+        }
+
+        if (attempts >= maxAttempts) {
+          throw new Error('Analysis timed out. Please try again.');
+        }
+
+        // Continue polling
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+        return poll();
+      };
+
+      await poll();
     } catch (err) {
       onAnalysisError(err);
     } finally {
@@ -334,6 +418,20 @@ export default function FileUploader({
     <>
       <style>{css}</style>
       <div className="uploader-wrapper">
+        {/* Hero Section */}
+        <div className="hero-section">
+          <h1 className="hero-title">Detect Deepfakes with Forensic Precision</h1>
+          <p className="hero-desc">
+            Our platform uses explainable forensic techniques — not black-box AI — to analyze images, videos, and audio for signs of manipulation or AI generation.
+          </p>
+          <div className="hero-features">
+            <span className="hero-feature"><span className="hero-feature-dot" />ELA Analysis</span>
+            <span className="hero-feature"><span className="hero-feature-dot" />Metadata Inspection</span>
+            <span className="hero-feature"><span className="hero-feature-dot" />Compression Forensics</span>
+            <span className="hero-feature"><span className="hero-feature-dot" />PDF Reports</span>
+          </div>
+        </div>
+
         <div className="uploader-heading">
           <h2>Verify Your Media</h2>
           <p>Upload an image, video, or audio file for forensic analysis</p>

@@ -72,70 +72,84 @@ def _get_styles() -> Dict[str, ParagraphStyle]:
         "title": ParagraphStyle(
             "ReportTitle",
             parent=_styles["Title"],
-            fontSize=24,
-            leading=30,
+            fontSize=22,
+            leading=26,
             textColor=colors.HexColor("#1e293b"),
             alignment=TA_CENTER,
-            spaceAfter=6,
+            spaceAfter=4,
         ),
         "subtitle": ParagraphStyle(
             "ReportSubtitle",
             parent=_styles["Normal"],
-            fontSize=12,
-            leading=16,
+            fontSize=11,
+            leading=14,
             textColor=colors.HexColor("#64748b"),
             alignment=TA_CENTER,
-            spaceAfter=20,
+            spaceAfter=12,
         ),
         "heading2": ParagraphStyle(
             "Heading2Custom",
             parent=_styles["Heading2"],
-            fontSize=16,
-            leading=20,
+            fontSize=14,
+            leading=18,
             textColor=colors.HexColor("#1e293b"),
-            spaceBefore=12,
-            spaceAfter=8,
+            spaceBefore=8,
+            spaceAfter=6,
         ),
         "body": ParagraphStyle(
             "BodyCustom",
             parent=_styles["Normal"],
-            fontSize=10,
-            leading=14,
+            fontSize=9,
+            leading=12,
             textColor=colors.HexColor("#334155"),
         ),
         "body_center": ParagraphStyle(
             "BodyCenter",
             parent=_styles["Normal"],
-            fontSize=10,
-            leading=14,
+            fontSize=9,
+            leading=12,
             textColor=colors.HexColor("#334155"),
             alignment=TA_CENTER,
+        ),
+        "conclusion": ParagraphStyle(
+            "ConclusionText",
+            parent=_styles["Normal"],
+            fontSize=10,
+            leading=14,
+            textColor=colors.HexColor("#1e293b"),
+            alignment=TA_LEFT,
+            spaceBefore=6,
+            spaceAfter=12,
+            backColor=colors.HexColor("#f1f5f9"),
+            borderPadding=8,
+            borderWidth=1,
+            borderColor=colors.HexColor("#cbd5e1"),
         ),
         "score_large": ParagraphStyle(
             "ScoreLarge",
             parent=_styles["Normal"],
-            fontSize=48,
-            leading=56,
+            fontSize=36,
+            leading=42,
             alignment=TA_CENTER,
-            spaceAfter=6,
+            spaceAfter=4,
         ),
         "verdict": ParagraphStyle(
             "VerdictStyle",
             parent=_styles["Normal"],
-            fontSize=14,
-            leading=18,
+            fontSize=12,
+            leading=16,
             alignment=TA_CENTER,
-            spaceBefore=4,
-            spaceAfter=16,
+            spaceBefore=2,
+            spaceAfter=8,
         ),
         "caption": ParagraphStyle(
             "CaptionStyle",
             parent=_styles["Normal"],
-            fontSize=9,
-            leading=12,
+            fontSize=8,
+            leading=10,
             textColor=colors.HexColor("#64748b"),
             alignment=TA_CENTER,
-            spaceAfter=10,
+            spaceAfter=6,
         ),
     }
 
@@ -170,10 +184,10 @@ def _build_executive_summary(
     """Build flowables for Page 1 — Executive Summary."""
     elements: List[Any] = []
 
-    elements.append(Spacer(1, 1.5 * cm))
+    elements.append(Spacer(1, 0.5 * cm))
     elements.append(Paragraph(PLATFORM_NAME, styles["title"]))
     elements.append(Paragraph(PLATFORM_SUBTITLE, styles["subtitle"]))
-    elements.append(Spacer(1, 0.5 * cm))
+    elements.append(Spacer(1, 0.2 * cm))
 
     # File information table
     file_id = analysis_results.get("file_id", "N/A")
@@ -252,6 +266,37 @@ def _build_executive_summary(
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
     elements.append(scale_table)
+    elements.append(Spacer(1, 0.5 * cm))
+    
+    # ── Dynamic Forensic Conclusion ──────────────────────────────────────
+    module_scores: Dict[str, Dict[str, Any]] = analysis_results.get("module_scores", {})
+    flagged_modules = [m for m, res in module_scores.items() if float(res.get("score", 0)) > 0.5]
+    
+    conclusion_text = "<b>Forensic Conclusion:</b> "
+    if fused_score < 0.3:
+        conclusion_text += "No significant signs of manipulation were detected. The file appears to be an original, unaltered capture."
+    elif fused_score < 0.5:
+        conclusion_text += "Minor anomalies were detected, which may be attributed to standard compression or saving processes rather than intentional manipulation."
+    else:
+        conclusion_text += "The file exhibits strong evidence of manipulation. "
+        reasons = []
+        if "ela" in flagged_modules:
+            reasons.append("abnormal error levels indicative of localized editing or AI generation")
+        if "metadata" in flagged_modules:
+            reasons.append("stripped or highly suspicious metadata footprints")
+        if "compression" in flagged_modules:
+            reasons.append("inconsistent compression artifacts typical of software-rendered images")
+        if "audio" in flagged_modules:
+            reasons.append("spectral anomalies characteristic of AI voice synthesis")
+        if "frame" in flagged_modules:
+            reasons.append("temporal discontinuities between video frames suggesting splicing")
+            
+        if reasons:
+            conclusion_text += "Specifically, analysis revealed " + ", and ".join(reasons) + "."
+        else:
+            conclusion_text += "Multiple forensic modules flagged the content as highly suspicious."
+
+    elements.append(Paragraph(conclusion_text, styles["conclusion"]))
 
     return elements
 
@@ -263,9 +308,8 @@ def _build_module_breakdown(
     """Build flowables for Page 2 — Module Breakdown table."""
     elements: List[Any] = []
 
-    elements.append(PageBreak())
     elements.append(Paragraph("Module Breakdown", styles["heading2"]))
-    elements.append(Spacer(1, 0.3 * cm))
+    elements.append(Spacer(1, 0.2 * cm))
 
     module_scores: Dict[str, Dict[str, Any]] = analysis_results.get(
         "module_scores", {}
@@ -294,12 +338,12 @@ def _build_module_breakdown(
                 findings_parts.append(f"{key}: {val}")
 
         findings_text = "; ".join(findings_parts) if findings_parts else "—"
-        # Truncate long findings
-        if len(findings_text) > 120:
-            findings_text = findings_text[:117] + "..."
+        # Truncate long findings slightly more to be safe, but Paragraph will wrap it
+        if len(findings_text) > 180:
+            findings_text = findings_text[:177] + "..."
 
         pretty_name = module_name.replace("_", " ").title()
-        rows.append([pretty_name, f"{score_val:.4f}", findings_text])
+        rows.append([pretty_name, f"{score_val:.4f}", Paragraph(findings_text, styles["body"])])
 
     col_widths = [4.0 * cm, 2.5 * cm, 9.5 * cm]
     table = Table(rows, colWidths=col_widths, repeatRows=1)
@@ -315,10 +359,10 @@ def _build_module_breakdown(
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#cbd5e1")),
         ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]
 
     # Row-based score colouring
