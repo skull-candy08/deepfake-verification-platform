@@ -135,3 +135,22 @@ DEFAULT_FRAME_EXTRACTION_FPS: int = 1
 # Image normalisation
 # ---------------------------------------------------------------------------
 IMAGE_MAX_DIMENSION: int = 1920
+
+# ---------------------------------------------------------------------------
+# Production Configuration Validation
+# ---------------------------------------------------------------------------
+def validate_production_config():
+    """Fail application startup if required production secrets or infrastructure settings are missing."""
+    if os.environ.get("FLASK_ENV") == "production":
+        # Check SQLite
+        if DATABASE_URL.startswith("sqlite://"):
+            raise RuntimeError("CRITICAL: SQLite cannot be used in production. Please configure a production DATABASE_URL (e.g., PostgreSQL).")
+        
+        # Check Weak Secrets
+        weak_secrets = ["12345678901234567890123456789012", "abcdefghijklmnopqrstuvwxyz123456"]
+        if SECRET_KEY in weak_secrets or JWT_SECRET_KEY in weak_secrets:
+            raise RuntimeError("CRITICAL: Production secrets cannot be default placeholder values.")
+        
+        # Redis is checked in extensions.py, so it's handled there.
+
+validate_production_config()

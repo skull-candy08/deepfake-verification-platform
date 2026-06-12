@@ -596,10 +596,14 @@ def _execute_pipeline(
 
     for name, result in module_results.items():
         if result is not None:
+            # Strip absolute paths from evidence array
+            raw_evidence = result.get("evidence", [])
+            sanitized_evidence = [os.path.basename(p) for p in raw_evidence if isinstance(p, str)]
+
             response["modules"][name] = {
                 "score": result.get("score"),
                 "details": result.get("details", {}),
-                "evidence": result.get("evidence", []),
+                "evidence": sanitized_evidence,
             }
         else:
             response["modules"][name] = {

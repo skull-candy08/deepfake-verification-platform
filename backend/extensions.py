@@ -12,6 +12,9 @@ bcrypt = Bcrypt()
 
 # Use Redis for rate limiting if available, otherwise fallback to memory
 redis_url = os.environ.get("REDIS_URL")
+if os.environ.get("FLASK_ENV") == "production" and not redis_url:
+    raise RuntimeError("CRITICAL: REDIS_URL environment variable is required in production for rate limiting.")
+
 storage_uri = redis_url if redis_url else "memory://"
 
 limiter = Limiter(

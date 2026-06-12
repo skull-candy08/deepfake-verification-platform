@@ -104,7 +104,7 @@ class Analysis(db.Model):
             "fused_score": self.fused_score,
             "tier_label": self.tier_label,
             "verdict": self.verdict,
-            "report_path": self.report_path,
+            "report_id": self.analysis_id if self.report_path else None,
             "error_message": self.error_message,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,

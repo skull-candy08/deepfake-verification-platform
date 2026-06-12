@@ -142,10 +142,37 @@ curl -X POST -H "Content-Type: application/json" \
 
 ## Security & DevOps Hardening
 
-*   **Secrets Management**: Never hardcode Cloudinary credentials or Flask secret keys into the codebase. Always use the `.env` file (see `.env.example`).
-*   **Git Tracking**: The `.gitignore` has been hardened to prevent accidental tracking of `instance/*.sqlite3` databases, `outputs/**/*.pdf` forensic reports, and other temporary artifacts. If you ever find a sensitive file tracked in git, run `git rm -r --cached <path>` immediately and commit the removal.
-*   **Rate Limiting**: `Flask-Limiter` is configured. For production, setting a `REDIS_URL` in `.env` is highly recommended to enable shared rate-limiting across multi-worker deployments (e.g. Gunicorn).
-*   **Authentication**: JWT tokens are managed using HttpOnly cookies to protect against XSS, and a server-side token blocklist prevents revoked tokens from being reused.
+### Authentication Flow (JWT)
+The application uses **Flask-JWT-Extended** for authentication.
+- **Login/Register**: Returns an `HttpOnly` access cookie and a CSRF protection cookie. This prevents Cross-Site Scripting (XSS) attacks from accessing tokens.
+- **Token Invalidation**: When a user logs out, their token's unique identifier (JTI) is saved to the database `TokenBlocklist`. Any subsequent requests with this token are rejected.
+- **Refresh Flow**: Refresh tokens can be implemented securely using a similar `HttpOnly` cookie strategy if extended session lifetimes are needed.
+
+### Production Deployment & Configuration
+
+For production (`FLASK_ENV=production`), the application strictly enforces the following rules to prevent accidental misconfigurations:
+
+1. **Database Integration**: SQLite (`sqlite://`) is blocked in production. Set `DATABASE_URL` to a robust database like PostgreSQL (e.g., `postgresql://user:pass@localhost/db`).
+2. **Secrets Management**: `FLASK_SECRET_KEY` and `JWT_SECRET_KEY` must be strong, unique 32+ character strings. Placeholders are actively blocked.
+3. **Rate Limiting**: `Flask-Limiter` requires a shared Redis instance in production to sync limits across multiple Gunicorn workers. Ensure `REDIS_URL` is set (e.g., `redis://localhost:6379/0`).
+
+**Required Environment Variables:**
+- `FLASK_ENV`
+- `FLASK_SECRET_KEY`
+- `JWT_SECRET_KEY`
+- `DATABASE_URL`
+- `REDIS_URL` (Required in production)
+- `CORS_ORIGINS`
+
+### Background Cleanup Scheduler
+Temporary uploads and forensic artifacts are continuously cleared to prevent disk exhaustion. The cleanup daemon is executed automatically in `backend/app.py` via a background thread (`run_cleanup`), removing files older than `CLEANUP_MAX_AGE_HOURS` (default: 24h). Active analyses are unaffected since they process well within this window.
+
+### Continuous Security Tooling Recommendations
+It is highly recommended to integrate the following static analysis tools into your CI/CD pipeline:
+- **TruffleHog / git-secrets / GitHub Secret Scanning**: Automatically detect leaked secrets in commits.
+- **Bandit**: Scan Python code for common security vulnerabilities.
+- **pip-audit**: Ensure backend dependencies are free of known CVEs.
+- **npm audit**: Keep frontend dependencies secure.
 
 ## Configuration
 
