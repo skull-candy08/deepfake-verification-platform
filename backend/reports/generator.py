@@ -453,7 +453,7 @@ def _build_evidence_pages(
 
         elements.append(Spacer(1, 0.2 * cm))
         elements.append(
-            Paragraph(f"Source: {img_path}", styles["caption"])
+            Paragraph(f"Source: {img_filename}", styles["caption"])
         )
         elements.append(Spacer(1, 0.5 * cm))
 

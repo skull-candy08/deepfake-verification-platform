@@ -1,19 +1,23 @@
 import axios from 'axios';
-import { getToken, clearTokens, refreshAccessToken } from './auth';
+import { getCookie, refreshAccessToken } from './auth';
 
 const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 const apiClient = axios.create({
   baseURL: BASE_URL,
   timeout: 120000,
+  withCredentials: true,
 });
 
 /* ─── Request Interceptor ──────────────────────────────────────── */
 apiClient.interceptors.request.use(
   (config) => {
-    const token = getToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    // Add CSRF token for mutating requests (Flask-JWT-Extended expects X-CSRF-TOKEN)
+    if (config.method !== 'get' && config.method !== 'head' && config.method !== 'options') {
+      const csrfToken = getCookie('csrf_access_token');
+      if (csrfToken) {
+        config.headers['X-CSRF-TOKEN'] = csrfToken;
+      }
     }
     return config;
   },
@@ -24,12 +28,12 @@ apiClient.interceptors.request.use(
 let isRefreshing = false;
 let failedQueue = [];
 
-const processQueue = (error, token = null) => {
+const processQueue = (error) => {
   failedQueue.forEach((prom) => {
     if (error) {
       prom.reject(error);
     } else {
-      prom.resolve(token);
+      prom.resolve();
     }
   });
   failedQueue = [];
@@ -49,8 +53,12 @@ apiClient.interceptors.response.use(
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         })
-          .then((token) => {
-            originalRequest.headers.Authorization = `Bearer ${token}`;
+          .then(() => {
+            // After refresh, the new CSRF token should be applied to the retry
+            if (originalRequest.method !== 'get' && originalRequest.method !== 'head') {
+                const newCsrf = getCookie('csrf_access_token');
+                if (newCsrf) originalRequest.headers['X-CSRF-TOKEN'] = newCsrf;
+            }
             return apiClient(originalRequest);
           })
           .catch((err) => Promise.reject(err));
@@ -60,13 +68,17 @@ apiClient.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const newToken = await refreshAccessToken();
-        processQueue(null, newToken);
-        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        await refreshAccessToken();
+        processQueue(null);
+        
+        // Re-attach new CSRF token
+        if (originalRequest.method !== 'get' && originalRequest.method !== 'head') {
+            const newCsrf = getCookie('csrf_access_token');
+            if (newCsrf) originalRequest.headers['X-CSRF-TOKEN'] = newCsrf;
+        }
         return apiClient(originalRequest);
       } catch (refreshError) {
-        processQueue(refreshError, null);
-        clearTokens();
+        processQueue(refreshError);
         window.location.reload();
         return Promise.reject(refreshError);
       } finally {

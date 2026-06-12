@@ -1,54 +1,44 @@
 import API from './api';
 
-const TOKEN_KEY = 'deepscan_access_token';
-const REFRESH_KEY = 'deepscan_refresh_token';
-
-export const getToken = () => localStorage.getItem(TOKEN_KEY);
-export const getRefreshToken = () => localStorage.getItem(REFRESH_KEY);
-
-export const setTokens = (access, refresh) => {
-  localStorage.setItem(TOKEN_KEY, access);
-  if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
-};
-
-export const clearTokens = () => {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(REFRESH_KEY);
+export const getCookie = (name) => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return null;
 };
 
 export const isAuthenticated = () => {
-  const token = getToken();
-  if (!token) return false;
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    return payload.exp * 1000 > Date.now();
-  } catch {
-    return false;
-  }
+  // If we have a CSRF access token, we assume we are authenticated
+  // (the backend will ultimately validate the HttpOnly cookie)
+  return !!getCookie('csrf_access_token');
 };
 
 export const login = async (email, password) => {
   const res = await API.post('/auth/login', { email, password });
-  setTokens(res.data.access_token, res.data.refresh_token);
   return res.data;
 };
 
 export const register = async (username, email, password) => {
   const res = await API.post('/auth/register', { username, email, password });
-  setTokens(res.data.access_token, res.data.refresh_token);
   return res.data;
 };
 
-export const logout = () => {
-  clearTokens();
+export const logout = async () => {
+  try {
+    // Call the server to blocklist the token and clear HttpOnly cookies
+    await API.post('/auth/logout');
+  } catch (error) {
+    console.error("Logout error:", error);
+  }
 };
 
 export const refreshAccessToken = async () => {
-  const refresh = getRefreshToken();
-  if (!refresh) throw new Error('No refresh token');
+  // The refresh token is in an HttpOnly cookie, but we must provide its CSRF token
+  const csrfRefresh = getCookie('csrf_refresh_token');
+  if (!csrfRefresh) throw new Error('No refresh token available');
+  
   const res = await API.post('/auth/refresh', {}, {
-    headers: { Authorization: `Bearer ${refresh}` }
+    headers: { 'X-CSRF-TOKEN': csrfRefresh }
   });
-  localStorage.setItem(TOKEN_KEY, res.data.access_token);
-  return res.data.access_token;
+  return res.data;
 };

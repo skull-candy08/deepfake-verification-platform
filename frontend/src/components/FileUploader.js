@@ -375,7 +375,7 @@ export default function FileUploader({
       const maxAttempts = 120;   // 4 minutes max
       let attempts = 0;
 
-      const poll = async () => {
+      while (attempts < maxAttempts) {
         attempts++;
         const statusRes = await getAnalysisStatus(analysisId);
 
@@ -388,16 +388,10 @@ export default function FileUploader({
           throw new Error(statusRes.error || 'Analysis failed on the server.');
         }
 
-        if (attempts >= maxAttempts) {
-          throw new Error('Analysis timed out. Please try again.');
-        }
-
-        // Continue polling
         await new Promise((resolve) => setTimeout(resolve, pollInterval));
-        return poll();
-      };
+      }
 
-      await poll();
+      throw new Error('Analysis timed out. Please try again.');
     } catch (err) {
       onAnalysisError(err);
     } finally {

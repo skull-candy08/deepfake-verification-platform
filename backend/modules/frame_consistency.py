@@ -185,19 +185,27 @@ def analyze(file_path: str, **kwargs: Any) -> Dict[str, Any]:
     # ── Face-landmark jitter analysis ────────────────────────────────────
     landmarks_seq: List[np.ndarray] = []
     frames_with_faces: int = 0
+    missing_initial = 0
     for img in frames_bgr:
         try:
             lm = _extract_landmarks(img)
         except Exception as exc:
             logger.debug("frame_consistency: landmark extraction error — %s", exc)
             lm = None
+            
         if lm is not None:
+            if missing_initial > 0:
+                # Pad the beginning with copies of this first found face
+                landmarks_seq.extend([lm.copy() for _ in range(missing_initial)])
+                missing_initial = 0
             landmarks_seq.append(lm)
             frames_with_faces += 1
         else:
             # Insert a copy of the last known landmarks to keep alignment
             if landmarks_seq:
                 landmarks_seq.append(landmarks_seq[-1].copy())
+            else:
+                missing_initial += 1
 
     details["frames_with_faces"] = frames_with_faces
 

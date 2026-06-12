@@ -11,10 +11,14 @@ from flask_jwt_extended import (
     create_refresh_token,
     get_jwt_identity,
     jwt_required,
+    set_access_cookies,
+    set_refresh_cookies,
+    unset_jwt_cookies,
+    get_jwt,
 )
 
 from extensions import bcrypt, db, limiter
-from models import User
+from models import User, TokenBlocklist
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +57,7 @@ def register():
     """Register a new user account.
 
     **Request** (JSON): ``{username, email, password}``
-    **Response** (201): ``{user, access_token, refresh_token}``
+    **Response** (201): ``{user}`` (cookies set)
     """
     data = request.get_json(silent=True)
     if not data:
@@ -68,9 +72,9 @@ def register():
     password = data["password"]
 
     # Check for duplicates
-    if User.query.filter_by(username=username).first():
+    if db.session.query(User).filter_by(username=username).first():
         return jsonify({"error": "Username already taken."}), 409
-    if User.query.filter_by(email=email).first():
+    if db.session.query(User).filter_by(email=email).first():
         return jsonify({"error": "Email already registered."}), 409
 
     password_hash = bcrypt.generate_password_hash(password).decode("utf-8")
@@ -83,20 +87,19 @@ def register():
     refresh_token = create_refresh_token(identity=str(user.id))
 
     logger.info("New user registered: id=%s username=%s", user.id, username)
-    return jsonify({
-        "user": user.to_dict(),
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-    }), 201
+    response = jsonify({"user": user.to_dict()})
+    set_access_cookies(response, access_token)
+    set_refresh_cookies(response, refresh_token)
+    return response, 201
 
 
 @auth_bp.route("/login", methods=["POST"])
 @limiter.limit("10/minute")
 def login():
-    """Authenticate a user and issue JWT tokens.
+    """Authenticate a user and issue JWT cookies.
 
     **Request** (JSON): ``{email, password}``
-    **Response** (200): ``{user, access_token, refresh_token}``
+    **Response** (200): ``{user}`` (cookies set)
     """
     data = request.get_json(silent=True)
     if not data:
@@ -108,7 +111,7 @@ def login():
     if not email or not password:
         return jsonify({"error": "Email and password are required."}), 400
 
-    user = User.query.filter_by(email=email).first()
+    user = db.session.query(User).filter_by(email=email).first()
     if not user or not bcrypt.check_password_hash(user.password_hash, password):
         return jsonify({"error": "Invalid email or password."}), 401
 
@@ -116,26 +119,47 @@ def login():
     refresh_token = create_refresh_token(identity=str(user.id))
 
     logger.info("User logged in: id=%s", user.id)
-    return jsonify({
-        "user": user.to_dict(),
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-    }), 200
+    response = jsonify({"user": user.to_dict()})
+    set_access_cookies(response, access_token)
+    set_refresh_cookies(response, refresh_token)
+    return response, 200
+
+
+@auth_bp.route("/logout", methods=["POST"])
+@jwt_required(verify_type=False)
+def logout():
+    """Log out a user by revoking the token and unsetting cookies.
+
+    **Response** (200): ``{msg}``
+    """
+    token = get_jwt()
+    jti = token["jti"]
+    ttype = token["type"]
+    
+    db.session.add(TokenBlocklist(jti=jti))
+    db.session.commit()
+    
+    response = jsonify({"msg": f"Successfully logged out ({ttype} token revoked)."})
+    unset_jwt_cookies(response)
+    return response, 200
 
 
 @auth_bp.route("/refresh", methods=["POST"])
 @jwt_required(refresh=True)
 def refresh():
-    """Issue a new access token using a valid refresh token.
+    """Issue a new access token using a valid refresh cookie.
 
-    **Response** (200): ``{access_token}``
+    **Response** (200): ``{}`` (new access cookie set)
     """
     current_user_id = get_jwt_identity()
     access_token = create_access_token(identity=current_user_id)
-    return jsonify({"access_token": access_token}), 200
+    
+    response = jsonify({"msg": "Token refreshed successfully."})
+    set_access_cookies(response, access_token)
+    return response, 200
 
 
-@auth_bp.route("/me", methods=["POST"])
+@auth_bp.route("/me", methods=["GET"])
 @jwt_required()
 def me():
     """Return the current authenticated user's profile.
@@ -143,7 +167,7 @@ def me():
     **Response** (200): ``{user: {...}}``
     """
     current_user_id = get_jwt_identity()
-    user = User.query.get(int(current_user_id))
+    user = db.session.get(User, int(current_user_id))
     if not user:
         return jsonify({"error": "User not found."}), 404
     return jsonify({"user": user.to_dict()}), 200

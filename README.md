@@ -140,6 +140,13 @@ curl -X POST -H "Content-Type: application/json" \
 
 ---
 
+## Security & DevOps Hardening
+
+*   **Secrets Management**: Never hardcode Cloudinary credentials or Flask secret keys into the codebase. Always use the `.env` file (see `.env.example`).
+*   **Git Tracking**: The `.gitignore` has been hardened to prevent accidental tracking of `instance/*.sqlite3` databases, `outputs/**/*.pdf` forensic reports, and other temporary artifacts. If you ever find a sensitive file tracked in git, run `git rm -r --cached <path>` immediately and commit the removal.
+*   **Rate Limiting**: `Flask-Limiter` is configured. For production, setting a `REDIS_URL` in `.env` is highly recommended to enable shared rate-limiting across multi-worker deployments (e.g. Gunicorn).
+*   **Authentication**: JWT tokens are managed using HttpOnly cookies to protect against XSS, and a server-side token blocklist prevents revoked tokens from being reused.
+
 ## Configuration
 
 All configurable parameters are in [`backend/config.py`](backend/config.py):

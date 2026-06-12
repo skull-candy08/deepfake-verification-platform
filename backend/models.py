@@ -56,10 +56,21 @@ class Upload(db.Model):
             "user_id": self.user_id,
             "file_id": self.file_id,
             "original_filename": self.original_filename,
-            "saved_path": self.saved_path,
             "media_type": self.media_type,
             "uploaded_at": self.uploaded_at.isoformat() if self.uploaded_at else None,
         }
+
+
+class TokenBlocklist(db.Model):
+    """Blocklist for revoked JWT tokens."""
+
+    __tablename__ = "token_blocklist"
+
+    id = db.Column(db.Integer, primary_key=True)
+    jti = db.Column(db.String(36), nullable=False, index=True)
+    created_at = db.Column(
+        db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
 
 
 class Analysis(db.Model):

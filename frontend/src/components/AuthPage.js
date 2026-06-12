@@ -414,7 +414,7 @@ export default function AuthPage({ onAuth }) {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                minLength={6}
+                minLength={8}
               />
             </div>
 

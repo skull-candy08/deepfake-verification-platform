@@ -7,6 +7,10 @@ and forensic analysis settings used across the entire application.
 
 import os
 from datetime import timedelta
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if present
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
 # ---------------------------------------------------------------------------
 # Base directories – resolved relative to *this* file so they work regardless
@@ -19,8 +23,20 @@ OUTPUT_DIR: str = os.path.join(BASE_DIR, "outputs")
 # ---------------------------------------------------------------------------
 # Application secrets & JWT
 # ---------------------------------------------------------------------------
-SECRET_KEY: str = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-in-production")
-JWT_SECRET_KEY: str = os.environ.get("JWT_SECRET_KEY", "jwt-dev-secret-change-in-production")
+SECRET_KEY: str = os.environ.get("FLASK_SECRET_KEY", "")
+JWT_SECRET_KEY: str = os.environ.get("JWT_SECRET_KEY", "")
+
+if not SECRET_KEY or len(SECRET_KEY) < 32:
+    raise RuntimeError("CRITICAL: FLASK_SECRET_KEY environment variable is missing or too weak. It must be at least 32 characters.")
+
+if not JWT_SECRET_KEY or len(JWT_SECRET_KEY) < 32:
+    raise RuntimeError("CRITICAL: JWT_SECRET_KEY environment variable is missing or too weak. It must be at least 32 characters.")
+
+# Enable JWT cookies for enhanced security
+JWT_TOKEN_LOCATION = ["cookies"]
+JWT_COOKIE_SECURE = os.environ.get("FLASK_ENV") == "production"  # True in production
+JWT_COOKIE_CSRF_PROTECT = True
+
 JWT_ACCESS_TOKEN_EXPIRES: timedelta = timedelta(hours=1)
 JWT_REFRESH_TOKEN_EXPIRES: timedelta = timedelta(days=30)
 
@@ -57,6 +73,9 @@ for _exts in ALLOWED_EXTENSIONS.values():
 
 # ---------------------------------------------------------------------------
 # Forensic module weights (must sum to 1.0 when all modules participate)
+# Note: These weights are automatically normalized at runtime based on which
+# modules actually execute for a given media type. For example, if an audio
+# file only triggers the 'audio' module, its weight becomes 1.0 (100%).
 # ---------------------------------------------------------------------------
 MODULE_WEIGHTS: dict[str, float] = {
     "metadata":    0.20,

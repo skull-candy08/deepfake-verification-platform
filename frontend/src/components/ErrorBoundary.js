@@ -96,7 +96,7 @@ export default class ErrorBoundary extends React.Component {
               </div>
               <h2 className="error-boundary-title">Something went wrong</h2>
               <div className="error-boundary-message">
-                {this.state.error?.message || 'An unexpected error occurred in the application.'}
+                An unexpected error occurred. Our team has been notified. Please try again.
               </div>
               <button
                 className="btn btn-primary error-boundary-btn"

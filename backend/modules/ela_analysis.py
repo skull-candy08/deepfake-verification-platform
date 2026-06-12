@@ -69,12 +69,13 @@ def _compute_ela(original_path: str, quality: int = ELA_RECOMPRESSION_QUALITY) -
 
     # Re-compress to a temporary JPEG
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+    os.close(tmp_fd)  # Close FD so Pillow can open it on Windows
     try:
         original.save(tmp_path, "JPEG", quality=quality)
         recompressed = Image.open(tmp_path).convert("RGB")
     finally:
-        os.close(tmp_fd)
-        os.unlink(tmp_path)
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
     orig_arr = np.array(original, dtype=np.float64)
     recomp_arr = np.array(recompressed, dtype=np.float64)

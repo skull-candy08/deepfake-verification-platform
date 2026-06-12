@@ -33,7 +33,7 @@ from config import (
     UPLOAD_DIR,
 )
 from extensions import bcrypt, db, jwt, limiter
-from models import Analysis, Upload, User
+from models import Analysis, Upload, User, TokenBlocklist
 from auth import auth_bp
 from cleanup import run_cleanup
 from utils.preprocessing import (
@@ -57,6 +57,9 @@ app.config["SECRET_KEY"] = config.SECRET_KEY
 app.config["JWT_SECRET_KEY"] = config.JWT_SECRET_KEY
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = config.JWT_ACCESS_TOKEN_EXPIRES
 app.config["JWT_REFRESH_TOKEN_EXPIRES"] = config.JWT_REFRESH_TOKEN_EXPIRES
+app.config["JWT_TOKEN_LOCATION"] = getattr(config, "JWT_TOKEN_LOCATION", ["headers"])
+app.config["JWT_COOKIE_SECURE"] = getattr(config, "JWT_COOKIE_SECURE", False)
+app.config["JWT_COOKIE_CSRF_PROTECT"] = getattr(config, "JWT_COOKIE_CSRF_PROTECT", False)
 app.config["SQLALCHEMY_DATABASE_URI"] = config.DATABASE_URL
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["MAX_CONTENT_LENGTH"] = config.MAX_FILE_SIZE_BYTES
@@ -66,14 +69,34 @@ db.init_app(app)
 jwt.init_app(app)
 bcrypt.init_app(app)
 limiter.init_app(app)
-CORS(app, origins=config.CORS_ORIGINS)
+CORS(app, origins=config.CORS_ORIGINS, supports_credentials=True)
 
 # Register auth blueprint
 app.register_blueprint(auth_bp)
 
+@jwt.token_in_blocklist_loader
+def check_if_token_revoked(jwt_header, jwt_payload: dict) -> bool:
+    jti = jwt_payload["jti"]
+    token = db.session.query(TokenBlocklist.id).filter_by(jti=jti).scalar()
+    return token is not None
+
 # Create tables
 with app.app_context():
     db.create_all()
+
+# Schedule background cleanup
+def _cleanup_loop():
+    import time
+    while True:
+        with app.app_context():
+            try:
+                run_cleanup(config.CLEANUP_MAX_AGE_HOURS)
+            except Exception as e:
+                app.logger.error(f"Cleanup task failed: {e}")
+        time.sleep(3600)  # run once an hour
+
+cleanup_thread = threading.Thread(target=_cleanup_loop, daemon=True)
+cleanup_thread.start()
 
 # ---------------------------------------------------------------------------
 # Logging
