@@ -1,0 +1,43 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  security-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: TruffleHog OSS Secret Scanner
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ""
+          head: ${{ github.ref_name }}
+
+      - name: Verify no blocked files are tracked
+        run: |
+          blocked_files=$(git ls-files "*.db" "*.sqlite3" "backend/outputs/*.pdf" "uploads/*" "outputs/*" ".env")
+          if [ -n "$blocked_files" ]; then
+            echo "CRITICAL: The following blocked files are tracked in git:"
+            echo "$blocked_files"
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install Bandit and pip-audit
+        run: pip install bandit pip-audit
+
+      - name: Run Bandit
+        run: bandit -r backend/ -ll -ii
+
+      - name: Run pip-audit
+        run: pip-audit -r backend/requirements.txt --ignore-vuln GHSA-wfm5-v35h-vwf4 # Example ignore if needed

@@ -1,0 +1,30 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=5000']
+      - id: detect-private-key
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: package\.json|\.lock$
+
+  - repo: local
+    hooks:
+      - id: block-sqlite-db
+        name: Block SQLite Databases
+        entry: Cannot commit .db or .sqlite3 files. Add them to .gitignore.
+        language: fail
+        files: \.(db|sqlite3)$
+      - id: block-reports
+        name: Block Generated Reports
+        entry: Cannot commit generated PDF reports.
+        language: fail
+        files: backend/outputs/.*\.pdf$
